@@ -9,7 +9,8 @@ import {
   useLocation,
 } from "@remix-run/react";
 import type { LinksFunction, MetaFunction } from "@remix-run/node";
-import React, { useState, useEffect, createContext, useContext } from "react";
+import React, { useState, useEffect } from "react";
+import { Toaster, toast } from 'react-hot-toast'; // Import Toaster and toast
 
 // Import CSS files
 import tailwindStyles from "./tailwind.css?url";
@@ -20,55 +21,9 @@ import globalStylesUrl from "./styles/global.css?url";
 import { Header } from "./components/Header";
 import { MobileMenu } from "./components/MobileMenu";
 import { AuthModal } from "./components/AuthModal";
-import { Toast } from "./components/Toast";
 
-// --- Toast Context ---
-interface ToastMessage {
-  id: number;
-  title: string;
-  message: string;
-  type: 'success' | 'error' | 'info' | 'warning';
-}
-
-interface ToastContextType {
-  showToast: (toast: Omit<ToastMessage, 'id'>) => void;
-  hideToast: (id: number) => void;
-  toasts: ToastMessage[];
-}
-
-const ToastContext = createContext<ToastContextType | undefined>(undefined);
-
-export const ToastProvider = ({ children }: { children: React.ReactNode }) => {
-  const [toasts, setToasts] = useState<ToastMessage[]>([]);
-  const toastIdCounter = React.useRef(0);
-
-  const showToast = (toast: Omit<ToastMessage, 'id'>) => {
-    const id = toastIdCounter.current++;
-    setToasts((prevToasts) => [...prevToasts, { ...toast, id }]);
-    // Auto-hide after 5 seconds (adjust as needed)
-    setTimeout(() => hideToast(id), 5000);
-  };
-
-  const hideToast = (id: number) => {
-    setToasts((prevToasts) => prevToasts.filter((t) => t.id !== id));
-  };
-
-  return (
-    <ToastContext.Provider value={{ showToast, hideToast, toasts }}>
-      {children}
-    </ToastContext.Provider>
-  );
-};
-
-export const useToast = (): ToastContextType => {
-  const context = useContext(ToastContext);
-  if (!context) {
-    throw new Error("useToast must be used within a ToastProvider");
-  }
-  return context;
-};
-// --- End Toast Context ---
-
+// Import Firebase Auth Service
+import { listenToAuthState, signOut, type AppUser } from "./services/auth.service";
 
 export const links: LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -77,7 +32,6 @@ export const links: LinksFunction = () => [
   { rel: "stylesheet", href: tailwindStyles },
   { rel: "stylesheet", href: leafletStyles },
   { rel: "stylesheet", href: globalStylesUrl },
-  // Add favicon link if you have one in public/
   // { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
 ];
 
@@ -91,9 +45,25 @@ export const meta: MetaFunction = () => {
 
 function AppLayout() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false); // Example state
-  const { toasts, hideToast } = useToast();
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null); // Use AppUser type
+  const [authInitialized, setAuthInitialized] = useState(false); // Track auth state initialization
   const location = useLocation();
+
+  // Listen to Firebase Auth state changes
+  useEffect(() => {
+    const unsubscribe = listenToAuthState((user) => {
+      setCurrentUser(user);
+      setAuthInitialized(true); // Mark auth as initialized once the first check is done
+       if (user) {
+         console.log("User logged in:", user);
+       } else {
+         console.log("User logged out");
+       }
+    });
+    // Cleanup listener on component unmount
+    return () => unsubscribe();
+  }, []);
 
   const toggleMobileMenu = () => setIsMobileMenuOpen(!isMobileMenuOpen);
   const openAuthModal = () => setIsAuthModalOpen(true);
@@ -104,10 +74,34 @@ function AppLayout() {
     setIsMobileMenuOpen(false);
   }, [location.pathname]);
 
-  // Example user state (replace with actual auth logic later)
-  const [user, setUser] = useState<{ name: string } | null>(null);
-  const handleLogin = () => setUser({ name: "Utilisateur Test" }); // Placeholder
-  const handleLogout = () => setUser(null); // Placeholder
+  const handleLogout = async () => {
+    try {
+      await signOut();
+      toast.success('Déconnexion réussie !');
+      // Auth state listener will automatically set currentUser to null
+    } catch (error) {
+       const message = error instanceof Error ? error.message : 'Erreur inconnue';
+       toast.error(`Erreur de déconnexion: ${message}`);
+    }
+  };
+
+  // Show loading or placeholder while auth state is initializing
+  if (!authInitialized) {
+    return (
+       <html lang="fr">
+        <head>
+          <meta charSet="utf-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <Meta />
+          <Links />
+        </head>
+        <body className="min-h-screen bg-jdc-black flex items-center justify-center">
+          <p className="text-jdc-gray-300">Chargement...</p>
+          <Scripts /> {/* Include Scripts even during loading */}
+        </body>
+      </html>
+    );
+  }
 
   return (
     <html lang="fr">
@@ -118,45 +112,63 @@ function AppLayout() {
         <Links />
       </head>
       <body className="min-h-screen bg-jdc-black text-jdc-gray-300 font-sans">
+        {/* Add react-hot-toast Toaster component */}
+        <Toaster
+          position="bottom-right"
+          toastOptions={{
+            className: '',
+            style: {
+              background: '#333', // Example: Dark background
+              color: '#fff', // Example: Light text
+            },
+            success: {
+              style: {
+                background: '#10B981', // Example: Green background for success
+              },
+              iconTheme: {
+                 primary: '#fff',
+                 secondary: '#10B981',
+              },
+            },
+            error: {
+              style: {
+                background: '#EF4444', // Example: Red background for error
+              },
+               iconTheme: {
+                 primary: '#fff',
+                 secondary: '#EF4444',
+              },
+            },
+          }}
+        />
+
         <div className="flex flex-col min-h-screen">
           <Header
-            user={user}
+            user={currentUser}
             onToggleMobileMenu={toggleMobileMenu}
-            onLoginClick={openAuthModal} // Or directly handleLogin if modal is simple
+            onLoginClick={openAuthModal}
             onLogoutClick={handleLogout}
           />
 
           <MobileMenu
             isOpen={isMobileMenuOpen}
-            user={user}
+            user={currentUser}
             onClose={toggleMobileMenu}
             onLoginClick={openAuthModal}
             onLogoutClick={handleLogout}
           />
 
           <main className="flex-grow p-4 md:p-6 lg:p-8">
-            <Outlet />
+            {/* Pass user context or data down if needed */}
+            <Outlet context={{ user: currentUser }} />
           </main>
         </div>
 
         <AuthModal
           isOpen={isAuthModalOpen}
           onClose={closeAuthModal}
-          onLoginSuccess={handleLogin} // Pass login success handler
+          // onLoginSuccess is handled by the auth state listener now
         />
-
-        {/* Toast Container */}
-        <div className="fixed bottom-5 right-5 z-[1000] space-y-2">
-          {toasts.map((toast) => (
-            <Toast
-              key={toast.id}
-              title={toast.title}
-              message={toast.message}
-              type={toast.type}
-              onClose={() => hideToast(toast.id)}
-            />
-          ))}
-        </div>
 
         <ScrollRestoration />
         <Scripts />
@@ -165,14 +177,13 @@ function AppLayout() {
   );
 }
 
+// No need for separate ToastProvider anymore
 export default function App() {
-  return (
-    <ToastProvider>
-      <AppLayout />
-    </ToastProvider>
-  );
+  return <AppLayout />;
 }
 
+
+// --- Error Boundary (Keep as is, but ensure styles are linked correctly) ---
 export function ErrorBoundary() {
   const error = useRouteError();
 

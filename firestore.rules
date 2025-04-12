@@ -1,0 +1,154 @@
+// Firestore Security Rules v2 with Sector Management (Syntax Corrected)
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- Helper Functions ---
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Get user data from /users collection
+    function getUserData(userId) {
+      // Use exists() for safer access
+      return exists(/databases/$(database)/documents/users/$(userId)) ?
+             get(/databases/$(database)/documents/users/$(userId)).data : null;
+    }
+
+    // Get user role (handle potential null data)
+    function getUserRole(userId) {
+      let userData = getUserData(userId);
+      return userData != null && userData.role is string ? userData.role : null;
+    }
+
+    // Get user sectors (handle potential null data and non-list 'secteurs')
+    function getUserSectors(userId) {
+      let userData = getUserData(userId);
+      // Return an empty list if user data is null, 'secteurs' doesn't exist, or is not a list
+      return userData != null && userData.secteurs is list ? userData.secteurs : [];
+    }
+
+    // Check if user has access to a specific sector
+    function hasSectorAccess(userId, requiredSector) {
+      // Ensure requiredSector is not null or empty before checking
+      return requiredSector != null && requiredSector != '' && requiredSector in getUserSectors(userId);
+    }
+
+    // Check roles
+    function isAdmin() {
+      return isAuthenticated() && getUserRole(request.auth.uid) == 'Admin';
+    }
+
+    function isCommercial() {
+      return isAuthenticated() && getUserRole(request.auth.uid) == 'Commercial';
+    }
+
+    function isTechnician() {
+      return isAuthenticated() && getUserRole(request.auth.uid) == 'Technician';
+    }
+
+    // --- Collection Rules ---
+
+    // Users Collection (/users/{userId})
+    match /users/{userId} {
+      // Admins can read any profile. Users can read their own profile.
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      // Only Admins can write/update/delete user profiles.
+      allow write: if isAdmin();
+      // Ensure role and secteurs fields are handled correctly on write/update
+      // allow update: if isAdmin() && request.resource.data.keys().hasAll(['role', 'secteurs']) && request.resource.data.secteurs is list;
+      // allow create: if isAdmin() && request.resource.data.keys().hasAll(['role', 'secteurs']) && request.resource.data.secteurs is list;
+    }
+
+    // SAP Ticket Collections (CHR, HACCP, Kezia, Tabac)
+    // CORRECTED SYNTAX: 'where' clause on the same line as 'match'
+    match /{sector}/{ticketId} where sector in ['CHR', 'HACCP', 'Kezia', 'Tabac'] { // Lines 57/58 combined
+
+      // Read Access:
+      // - Admins can read any ticket.
+      // - Technicians can read tickets in their assigned sectors.
+      // - Commercials can read tickets in their assigned sectors.
+      allow read: if isAuthenticated() &&
+                    (isAdmin() ||
+                     (isTechnician() && hasSectorAccess(request.auth.uid, sector)) ||
+                     (isCommercial() && hasSectorAccess(request.auth.uid, sector))
+                    );
+
+      // Write Access (Create, Update, Delete):
+      // - Admins can write any ticket.
+      // - Technicians can write tickets in their assigned sectors.
+      allow write: if isAuthenticated() &&
+                     (isAdmin() ||
+                      (isTechnician() && hasSectorAccess(request.auth.uid, sector))
+                     );
+      // Consider adding validation for ticket data structure on write
+      // allow create: if (isAdmin() || (isTechnician() && hasSectorAccess(request.auth.uid, sector))) && request.resource.data.keys().has('date'); // Example
+    }
+
+    // Envoi Collection (/Envoi/{shipmentId})
+    match /Envoi/{shipmentId} {
+      // Read Access:
+      // - Admins can read any shipment.
+      // - Commercials can read shipments belonging to their assigned sectors.
+      // - Technicians can read shipments belonging to their assigned sectors.
+      // Requires 'secteur' field in the Envoi document and user profile having that sector.
+      allow read: if isAuthenticated() &&
+                    (isAdmin() ||
+                     (isCommercial() && hasSectorAccess(request.auth.uid, resource.data.secteur)) ||
+                     (isTechnician() && hasSectorAccess(request.auth.uid, resource.data.secteur))
+                    );
+
+      // Write Access (Create, Update, Delete):
+      // - Admins can write any shipment.
+      // - Commercials can write shipments belonging to their assigned sectors.
+      // Requires 'secteur' field in the Envoi document being written/updated.
+      allow write: if isAuthenticated() &&
+                     (isAdmin() ||
+                      // On create/update, check the incoming data (request.resource.data)
+                      (isCommercial() && hasSectorAccess(request.auth.uid, request.resource.data.secteur))
+                     );
+      // Add validation for Envoi data structure, especially 'secteur' field on write
+      // allow create: if (isAdmin() || (isCommercial() && hasSectorAccess(request.auth.uid, request.resource.data.secteur))) && request.resource.data.keys().has('secteur');
+      // allow update: if (isAdmin() || (isCommercial() && hasSectorAccess(request.auth.uid, request.resource.data.secteur))) && request.resource.data.keys().has('secteur');
+    }
+
+    // Daily Stats Snapshots Collection (/dailyStatsSnapshots/{snapshotId})
+    match /dailyStatsSnapshots/{snapshotId} {
+      // Allow any authenticated user to read snapshots.
+      allow read: if isAuthenticated();
+      // Allow only Admins to write (or lock down if using Cloud Functions).
+      allow write: if isAdmin(); // Or use: if false; for Cloud Function only writes
+    }
+
+    // Articles Collection (/articles/{articleId})
+    match /articles/{articleId} {
+      // Allow any authenticated user to read articles.
+      allow read: if isAuthenticated();
+      // Allow only Admins to write articles.
+      allow write: if isAdmin();
+    }
+
+    // Geocodes Collection (/geocodes/{geocodeId})
+    match /geocodes/{geocodeId} {
+      // Allow any authenticated user to read geocodes.
+      allow read: if isAuthenticated();
+      // Allow Admins and Technicians to write (e.g., update locations).
+      // Consider if sector access is needed here too.
+      allow write: if isAdmin() || isTechnician();
+    }
+
+    // Auth Users Collection (/auth_users/{userId}) - Purpose Unclear
+    match /auth_users/{userId} {
+      // Deny all client access by default - This collection might be for backend/auth triggers
+      allow read, write: if false;
+    }
+
+    // Default Deny: Deny all other reads/writes not explicitly allowed
+    // This rule should be inside the `match /databases/{database}/documents { ... }` block
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+  } // Closes: match /databases/{database}/documents {
+} // Closes: service cloud.firestore { - This should now be the correct final brace (around line 138 now)

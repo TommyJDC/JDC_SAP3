@@ -3,20 +3,20 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimes, faEnvelope, faLock } from '@fortawesome/free-solid-svg-icons';
 import { Button } from './ui/Button';
 import { Input } from './ui/Input';
-import { useToast } from '~/root'; // Import useToast
+import { signIn } from '~/services/auth.service'; // Import the signIn function
+import { toast } from 'react-hot-toast'; // Import react-hot-toast
 
 interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onLoginSuccess: (userData: { name: string }) => void; // Callback on successful login
+  // onLoginSuccess is no longer needed here, auth state is global
 }
 
-export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSuccess }) => {
+export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { showToast } = useToast(); // Get showToast function
+  const [error, setError] = useState<string | null>(null); // Keep local error for form feedback
 
   if (!isOpen) return null;
 
@@ -25,34 +25,33 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
     setIsLoading(true);
     setError(null);
 
-    // --- Placeholder Login Logic ---
-    // Replace this with your actual authentication API call
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate network delay
-
-      if (email === 'test@jdc.fr' && password === 'password') {
-        // Simulate successful login
-        const userData = { name: 'Utilisateur Test' }; // Replace with actual user data from API
-        onLoginSuccess(userData);
-        showToast({ title: 'Succès', message: 'Connexion réussie !', type: 'success' });
-        onClose(); // Close modal on success
-      } else {
-        throw new Error('Email ou mot de passe incorrect.');
-      }
+      // Use the signIn service function
+      const user = await signIn(email, password);
+      toast.success(`Bienvenue, ${user.displayName || user.email}!`);
+      onClose(); // Close modal on success
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Une erreur est survenue.';
-      setError(message);
-      showToast({ title: 'Erreur', message: message, type: 'error' });
+      setError(message); // Show error message below the form
+      toast.error(message); // Show error toast notification
     } finally {
       setIsLoading(false);
     }
-    // --- End Placeholder Logic ---
   };
+
+  // Clear form state when closing
+  const handleClose = () => {
+     setEmail('');
+     setPassword('');
+     setError(null);
+     setIsLoading(false);
+     onClose();
+  }
 
   return (
     <div
       className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4"
-      onClick={onClose} // Close on overlay click
+      onClick={handleClose} // Close on overlay click
       role="dialog"
       aria-modal="true"
       aria-labelledby="auth-modal-title"
@@ -62,7 +61,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside modal
       >
         <button
-          onClick={onClose}
+          onClick={handleClose}
           className="absolute top-3 right-3 text-jdc-gray-400 hover:text-white focus:outline-none"
           aria-label="Fermer la modal"
         >
@@ -85,6 +84,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
             placeholder="votreadresse@email.com"
             required
             disabled={isLoading}
+            autoComplete="email"
           />
           <Input
             label="Mot de passe"
@@ -97,6 +97,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
             placeholder="********"
             required
             disabled={isLoading}
+            autoComplete="current-password"
           />
 
           {error && (
