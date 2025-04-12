@@ -85,7 +85,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <Meta />
         <Links />
       </head>
-      <body className="bg-jdc-dark text-white font-sans">
+      {/* Changed bg-jdc-dark to bg-jdc-black */}
+      <body className="bg-jdc-black text-white font-sans">
         <Toaster position="bottom-center" />
         <Header user={user} loadingAuth={loadingAuth} /> {/* Pass user and loading state */}
         <main className="p-4 md:p-6 lg:p-8">
