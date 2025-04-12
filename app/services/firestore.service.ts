@@ -5,19 +5,24 @@ import {
   query,
   where,
   limit,
-  orderBy,
+  orderBy, // Keep import, might be used elsewhere
   getCountFromServer,
   Timestamp,
   doc,
   getDoc,
+  setDoc, // Import setDoc for writing cache
+  serverTimestamp, // Import serverTimestamp
   collectionGroup // Import collectionGroup for potential future use
 } from "firebase/firestore";
-import type { SapTicket, Shipment, StatsSnapshot, UserProfile } from "~/types/firestore.types";
+import type { SapTicket, Shipment, StatsSnapshot, UserProfile, GeocodeCacheEntry } from "~/types/firestore.types"; // Added GeocodeCacheEntry
 import { app as firebaseApp } from "~/firebase.config"; // Use aliased import
 import { getAuth } from "firebase/auth"; // Needed to potentially get current user
 
 const db = getFirestore(firebaseApp);
 const TICKET_SECTORS = ['CHR', 'HACCP', 'Kezia', 'Tabac']; // Define valid sectors
+const GEOCODE_COLLECTION = "geocodes"; // Define collection name for geocoding cache
+const GEOCODE_CACHE_EXPIRY_DAYS = 30; // Cache expiry in days (optional)
+const SHIPMENT_COLLECTION = "Envoi"; // Define shipment collection name
 
 // --- Helper Functions ---
 
@@ -37,6 +42,8 @@ function docToShipment(docId: string, data: any): Shipment {
   return {
     id: docId,
     ...data,
+    // Ensure dateCreation is converted if it's a Timestamp (handle if it might exist later)
+    dateCreation: data.dateCreation instanceof Timestamp ? data.dateCreation.toDate() : data.dateCreation, // Keep conversion logic just in case
     secteur: data.secteur || 'Inconnu', // Fallback if missing, though rules might prevent access
   } as Shipment;
 }
@@ -118,24 +125,14 @@ export const getTotalTicketCountSdk = async (userSectors: string[]): Promise<num
 // Firestore rules handle sector filtering based on resource.data.secteur
 export const getActiveShipmentCountSdk = async (): Promise<number | null> => {
   try {
-    const collRef = collection(db, "Envoi");
+    const collRef = collection(db, SHIPMENT_COLLECTION);
     // Query for documents where statutExpedition is NOT "OUI"
-    // Firestore doesn't have a direct "not equal" for multiple values or null checks easily combined.
-    // A common workaround is fetching all and filtering client-side, or structuring data differently.
-    // For simplicity here, let's assume rules filter correctly and we count docs where statutExpedition != 'OUI'.
-    // This might require fetching more data than ideal if rules aren't perfectly restrictive.
-    // A more robust Firestore query might involve multiple queries or data restructuring.
-    // Let's try querying for 'NON' or other expected non-'OUI' values if known.
-    // If 'statutExpedition' can be missing or null, those are also "active".
-
-    // Example: Query for 'NON' explicitly, assuming it's the main "active" status besides null/missing
-    // This is an approximation and might need refinement based on actual data values.
     const q = query(collRef, where("statutExpedition", "!=", "OUI")); // Query for not equal to "OUI"
 
     const snapshot = await getCountFromServer(q);
     const totalCount = snapshot.data().count;
 
-    console.log("[SDK] Active shipment count (Envoi, statutExpedition != 'OUI', filtered by rules) fetched:", totalCount);
+    console.log(`[SDK] Active shipment count (Envoi, statutExpedition != 'OUI', filtered by rules) fetched:`, totalCount);
     return totalCount;
   } catch (error) {
     // Errors here might indicate permission issues if rules are misconfigured or user lacks access
@@ -150,9 +147,8 @@ export const getActiveShipmentCountSdk = async (): Promise<number | null> => {
 export const getActiveClientCountInefficientSdk = async (): Promise<number | null> => {
   const activeClients = new Set<string>();
   try {
-    const collRef = collection(db, "Envoi");
-    // Similar challenge as above for filtering active shipments efficiently.
-    // We fetch documents potentially filtered by rules and then check status client-side.
+    const collRef = collection(db, SHIPMENT_COLLECTION);
+    // Fetch documents potentially filtered by rules and then check status client-side.
     const q = query(collRef, where("statutExpedition", "!=", "OUI")); // Fetch docs not marked "OUI"
 
     const querySnapshot = await getDocs(q);
@@ -170,7 +166,7 @@ export const getActiveClientCountInefficientSdk = async (): Promise<number | nul
         }
     });
 
-    console.log("[SDK] Active client count (Envoi, inefficient, filtered by rules) fetched:", activeClients.size);
+    console.log(`[SDK] Active client count (Envoi, inefficient, filtered by rules) fetched:`, activeClients.size);
     return activeClients.size;
   } catch (error) {
     console.error("[SDK] Error getting active client count from Envoi (check rules/permissions):", error);
@@ -237,13 +233,13 @@ export const getRecentTicketsSdk = async (count: number, userSectors: string[]):
 
 // Get recent shipments from 'Envoi'
 // Firestore rules handle sector filtering based on resource.data.secteur
+// REMOVED: orderBy("dateCreation", "desc") because the field is missing in documents
 export const getRecentShipmentsSdk = async (count: number): Promise<Shipment[]> => {
    try {
-     const collRef = collection(db, "Envoi");
-     // Assuming a 'dateCreation' field for ordering (replace if different or remove orderBy)
-     // If no date field, remove orderBy and rely on limit only
-     // Add orderBy field if available, e.g., orderBy("dateCreation", "desc")
-     const q = query(collRef, /* orderBy("dateCreation", "desc"), */ limit(count));
+     const collRef = collection(db, SHIPMENT_COLLECTION);
+     // Fetch documents, relying on rules for filtering. Limit the count.
+     // No ordering applied here due to missing dateCreation field.
+     const q = query(collRef, limit(count));
      const querySnapshot = await getDocs(q);
 
      const recentShipments: Shipment[] = [];
@@ -252,13 +248,48 @@ export const getRecentShipmentsSdk = async (count: number): Promise<Shipment[]> 
        recentShipments.push(docToShipment(doc.id, doc.data()));
      });
 
-     console.log(`[SDK] Fetched ${recentShipments.length} recent shipments from Envoi (filtered by rules).`);
+     console.log(`[SDK] Fetched ${recentShipments.length} recent shipments from Envoi (filtered by rules, no date sorting).`);
+     // Note: The order is not guaranteed without orderBy.
      return recentShipments;
 
    } catch (error) {
      console.error("[SDK] Error getting recent shipments from Envoi (check rules/permissions):", error);
      return [];
    }
+};
+
+/**
+ * Fetches ALL shipments from the 'Envoi' collection accessible by the current user.
+ * Firestore rules are expected to filter based on the user's allowed sectors
+ * by checking the 'secteur' field within each shipment document.
+ * REMOVED: orderBy("dateCreation", "desc") because the field is missing in documents
+ * @returns Promise<Shipment[]> An array of all accessible shipments.
+ */
+export const getAllShipmentsSdk = async (): Promise<Shipment[]> => {
+  try {
+    const collRef = collection(db, SHIPMENT_COLLECTION);
+    // No specific query constraints here, rely on Firestore rules for filtering.
+    // No ordering applied here due to missing dateCreation field.
+    const q = query(collRef);
+    const querySnapshot = await getDocs(q);
+
+    const allShipments: Shipment[] = [];
+    querySnapshot.forEach((doc) => {
+      // Firestore rules should ensure we only get docs the user can access.
+      allShipments.push(docToShipment(doc.id, doc.data()));
+    });
+
+    console.log(`[SDK] Fetched ${allShipments.length} total shipments from Envoi (filtered by rules, no date sorting).`);
+    // Note: The order is not guaranteed without orderBy.
+    // Consider client-side sorting if needed, e.g., by client name:
+    // allShipments.sort((a, b) => (a.nomClient || '').localeCompare(b.nomClient || ''));
+    return allShipments;
+
+  } catch (error) {
+    // Errors might indicate permission issues if rules are misconfigured or user lacks access.
+    console.error("[SDK] Error getting all shipments from Envoi (check rules/permissions):", error);
+    return []; // Return empty array on error
+  }
 };
 
 
@@ -281,4 +312,73 @@ export const getLatestStatsSnapshotsSdk = async (count: number = 1): Promise<Sta
     console.error(`[SDK] Error getting latest ${count} stats snapshots:`, error);
     return [];
   }
+};
+
+// --- Geocoding Cache Functions ---
+
+/**
+ * Fetches a geocode entry from the Firestore cache.
+ * Checks for expiry if GEOCODE_CACHE_EXPIRY_DAYS is set.
+ * @param normalizedAddress The address string, normalized (e.g., lowercase, trimmed).
+ * @returns The cached entry or null if not found, expired, or error.
+ */
+export const fetchGeocode = async (normalizedAddress: string): Promise<GeocodeCacheEntry | null> => {
+  if (!normalizedAddress) return null;
+  try {
+    const docRef = doc(db, GEOCODE_COLLECTION, normalizedAddress);
+    const docSnap = await getDoc(docRef);
+
+    if (docSnap.exists()) {
+      const data = docSnap.data() as GeocodeCacheEntry;
+
+      // Optional: Check for cache expiry
+      if (GEOCODE_CACHE_EXPIRY_DAYS > 0 && data.timestamp instanceof Timestamp) {
+        const now = new Date();
+        const expiryDate = new Date(data.timestamp.toDate());
+        expiryDate.setDate(expiryDate.getDate() + GEOCODE_CACHE_EXPIRY_DAYS);
+
+        if (now > expiryDate) {
+          console.log(`[SDK] Geocode cache expired for: "${normalizedAddress}"`);
+          // Optionally delete the expired entry here: await deleteDoc(docRef);
+          return null; // Treat as cache miss
+        }
+      }
+
+      console.log(`[SDK] Geocode cache hit for: "${normalizedAddress}"`);
+      return data;
+    } else {
+      console.log(`[SDK] Geocode cache miss for: "${normalizedAddress}"`);
+      return null;
+    }
+  } catch (error) {
+    console.error(`[SDK] Error fetching geocode cache for "${normalizedAddress}":`, error);
+    return null; // Return null on error to trigger API lookup
+  }
+};
+
+/**
+ * Stores a geocode result in the Firestore cache.
+ * Uses the normalized address as the document ID.
+ * @param normalizedAddress The address string, normalized.
+ * @param latitude The latitude.
+ * @param longitude The longitude.
+ * @returns Promise<void>
+ */
+export const storeGeocode = async (normalizedAddress: string, latitude: number, longitude: number): Promise<void> => {
+   if (!normalizedAddress) return;
+   try {
+     const docRef = doc(db, GEOCODE_COLLECTION, normalizedAddress);
+     const data: GeocodeCacheEntry = {
+       latitude,
+       longitude,
+       timestamp: serverTimestamp() // Use server timestamp for consistency
+     };
+     // Use setDoc with merge: true if you want to update timestamp without overwriting other fields if they existed
+     // await setDoc(docRef, data, { merge: true });
+     await setDoc(docRef, data); // Overwrites existing doc, which is fine for this cache use case
+     console.log(`[SDK] Stored geocode cache for: "${normalizedAddress}"`);
+   } catch (error) {
+     console.error(`[SDK] Error storing geocode cache for "${normalizedAddress}":`, error);
+     // Decide if you want to re-throw or just log
+   }
 };

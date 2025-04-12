@@ -41,8 +41,9 @@ export interface Shipment {
   codeClient?: string;
   nomClient?: string;
   secteur?: string;
-  statutExpedition?: 'OUI' | 'NON' | string; // 'OUI' likely means delivered
+  statutExpedition?: 'OUI' | 'NON' | 'RELICAT' | string; // Added RELICAT, allow other statuses too
   trackingLink?: string;
+  dateCreation?: any; // Added for sorting/display (Timestamp or Date)
 }
 
 // Type for data expected by the Dashboard component (now fetched client-side)
@@ -58,13 +59,14 @@ export interface DashboardLoaderData {
  // Example: maybe theme preference or static text?
 }
 
-// Type for Geocoding data
-export interface GeocodeData {
-  address: string;
+// Type for Geocoding Cache stored in Firestore
+export interface GeocodeCacheEntry {
+  // The document ID will be the normalized address string
   latitude: number;
   longitude: number;
-  timestamp: any; // Firestore Timestamp
+  timestamp: any; // Firestore Timestamp (serverTimestamp())
 }
+
 
 // Type for Articles
 export interface Article {

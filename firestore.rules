@@ -1,154 +1,125 @@
-// Firestore Security Rules v2 with Sector Management (Syntax Corrected)
 rules_version = '2';
+
+// Helper function to check if user is authenticated
+function isAuthenticated() {
+  return request.auth != null;
+}
+
+// Helper function to get user data (e.g., role, sectors) from Firestore /users collection
+// Assumes a /users/{uid} document exists with 'role' and 'secteurs' fields
+function getUserData() {
+  return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+}
+
+// Helper function to check if user has a specific role
+function hasRole(role) {
+  let userData = getUserData();
+  return userData != null && userData.role == role;
+}
+
+// Helper function to check if user has access to a specific sector
+// Assumes userData.secteurs is an array of strings
+function hasAccessToSector(sector) {
+  let userData = getUserData();
+  // Allow Admins access to all sectors implicitly, or check specific sectors for others
+  return userData != null && (userData.role == 'Admin' || (userData.secteurs != null && sector in userData.secteurs));
+}
+
+// Helper function to check if user has access based on the resource's sector field
+// Assumes the resource being accessed has a 'secteur' field (e.g., Envoi documents)
+function resourceSectorAllowed(resource) {
+   let userData = getUserData();
+   // Allow Admins access regardless of resource sector
+   return userData != null && (userData.role == 'Admin' || (resource.data.secteur != null && resource.data.secteur in userData.secteurs));
+}
+
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // --- Helper Functions ---
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    // Get user data from /users collection
-    function getUserData(userId) {
-      // Use exists() for safer access
-      return exists(/databases/$(database)/documents/users/$(userId)) ?
-             get(/databases/$(database)/documents/users/$(userId)).data : null;
-    }
-
-    // Get user role (handle potential null data)
-    function getUserRole(userId) {
-      let userData = getUserData(userId);
-      return userData != null && userData.role is string ? userData.role : null;
-    }
-
-    // Get user sectors (handle potential null data and non-list 'secteurs')
-    function getUserSectors(userId) {
-      let userData = getUserData(userId);
-      // Return an empty list if user data is null, 'secteurs' doesn't exist, or is not a list
-      return userData != null && userData.secteurs is list ? userData.secteurs : [];
-    }
-
-    // Check if user has access to a specific sector
-    function hasSectorAccess(userId, requiredSector) {
-      // Ensure requiredSector is not null or empty before checking
-      return requiredSector != null && requiredSector != '' && requiredSector in getUserSectors(userId);
-    }
-
-    // Check roles
-    function isAdmin() {
-      return isAuthenticated() && getUserRole(request.auth.uid) == 'Admin';
-    }
-
-    function isCommercial() {
-      return isAuthenticated() && getUserRole(request.auth.uid) == 'Commercial';
-    }
-
-    function isTechnician() {
-      return isAuthenticated() && getUserRole(request.auth.uid) == 'Technician';
-    }
-
-    // --- Collection Rules ---
-
-    // Users Collection (/users/{userId})
-    match /users/{userId} {
-      // Admins can read any profile. Users can read their own profile.
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      // Only Admins can write/update/delete user profiles.
-      allow write: if isAdmin();
-      // Ensure role and secteurs fields are handled correctly on write/update
-      // allow update: if isAdmin() && request.resource.data.keys().hasAll(['role', 'secteurs']) && request.resource.data.secteurs is list;
-      // allow create: if isAdmin() && request.resource.data.keys().hasAll(['role', 'secteurs']) && request.resource.data.secteurs is list;
-    }
-
-    // SAP Ticket Collections (CHR, HACCP, Kezia, Tabac)
-    // CORRECTED SYNTAX: 'where' clause on the same line as 'match'
-    match /{sector}/{ticketId} where sector in ['CHR', 'HACCP', 'Kezia', 'Tabac'] { // Lines 57/58 combined
-
-      // Read Access:
-      // - Admins can read any ticket.
-      // - Technicians can read tickets in their assigned sectors.
-      // - Commercials can read tickets in their assigned sectors.
-      allow read: if isAuthenticated() &&
-                    (isAdmin() ||
-                     (isTechnician() && hasSectorAccess(request.auth.uid, sector)) ||
-                     (isCommercial() && hasSectorAccess(request.auth.uid, sector))
-                    );
-
-      // Write Access (Create, Update, Delete):
-      // - Admins can write any ticket.
-      // - Technicians can write tickets in their assigned sectors.
-      allow write: if isAuthenticated() &&
-                     (isAdmin() ||
-                      (isTechnician() && hasSectorAccess(request.auth.uid, sector))
-                     );
-      // Consider adding validation for ticket data structure on write
-      // allow create: if (isAdmin() || (isTechnician() && hasSectorAccess(request.auth.uid, sector))) && request.resource.data.keys().has('date'); // Example
-    }
-
-    // Envoi Collection (/Envoi/{shipmentId})
-    match /Envoi/{shipmentId} {
-      // Read Access:
-      // - Admins can read any shipment.
-      // - Commercials can read shipments belonging to their assigned sectors.
-      // - Technicians can read shipments belonging to their assigned sectors.
-      // Requires 'secteur' field in the Envoi document and user profile having that sector.
-      allow read: if isAuthenticated() &&
-                    (isAdmin() ||
-                     (isCommercial() && hasSectorAccess(request.auth.uid, resource.data.secteur)) ||
-                     (isTechnician() && hasSectorAccess(request.auth.uid, resource.data.secteur))
-                    );
-
-      // Write Access (Create, Update, Delete):
-      // - Admins can write any shipment.
-      // - Commercials can write shipments belonging to their assigned sectors.
-      // Requires 'secteur' field in the Envoi document being written/updated.
-      allow write: if isAuthenticated() &&
-                     (isAdmin() ||
-                      // On create/update, check the incoming data (request.resource.data)
-                      (isCommercial() && hasSectorAccess(request.auth.uid, request.resource.data.secteur))
-                     );
-      // Add validation for Envoi data structure, especially 'secteur' field on write
-      // allow create: if (isAdmin() || (isCommercial() && hasSectorAccess(request.auth.uid, request.resource.data.secteur))) && request.resource.data.keys().has('secteur');
-      // allow update: if (isAdmin() || (isCommercial() && hasSectorAccess(request.auth.uid, request.resource.data.secteur))) && request.resource.data.keys().has('secteur');
-    }
-
-    // Daily Stats Snapshots Collection (/dailyStatsSnapshots/{snapshotId})
-    match /dailyStatsSnapshots/{snapshotId} {
-      // Allow any authenticated user to read snapshots.
-      allow read: if isAuthenticated();
-      // Allow only Admins to write (or lock down if using Cloud Functions).
-      allow write: if isAdmin(); // Or use: if false; for Cloud Function only writes
-    }
-
-    // Articles Collection (/articles/{articleId})
-    match /articles/{articleId} {
-      // Allow any authenticated user to read articles.
-      allow read: if isAuthenticated();
-      // Allow only Admins to write articles.
-      allow write: if isAdmin();
-    }
-
-    // Geocodes Collection (/geocodes/{geocodeId})
-    match /geocodes/{geocodeId} {
-      // Allow any authenticated user to read geocodes.
-      allow read: if isAuthenticated();
-      // Allow Admins and Technicians to write (e.g., update locations).
-      // Consider if sector access is needed here too.
-      allow write: if isAdmin() || isTechnician();
-    }
-
-    // Auth Users Collection (/auth_users/{userId}) - Purpose Unclear
-    match /auth_users/{userId} {
-      // Deny all client access by default - This collection might be for backend/auth triggers
-      allow read, write: if false;
-    }
-
-    // Default Deny: Deny all other reads/writes not explicitly allowed
-    // This rule should be inside the `match /databases/{database}/documents { ... }` block
+    // Default Deny: Secure by default
     match /{document=**} {
       allow read, write: if false;
     }
 
-  } // Closes: match /databases/{database}/documents {
-} // Closes: service cloud.firestore { - This should now be the correct final brace (around line 138 now)
+    // Users Collection:
+    // - Allow users to read their own profile.
+    // - Allow Admins to read/write any profile (for user management).
+    // - Allow users to create their own profile document upon signup? (Optional, depends on flow)
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || hasRole('Admin'));
+      allow write: if isAuthenticated() && hasRole('Admin');
+      // Optional: Allow creation by the user themselves ONLY if document doesn't exist yet
+      // allow create: if isAuthenticated() && request.auth.uid == userId && !exists(/databases/$(database)/documents/users/$(userId));
+      // Optional: Allow update by the user themselves (e.g., display name)
+      // allow update: if isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Ticket Collections (CHR, HACCP, Kezia, Tabac):
+    // - Allow authenticated users to read tickets if they have access to that specific sector.
+    // - Allow Admins to write (create, update, delete).
+    // - Potentially allow Technicians/Commercials to update specific fields? (More granular)
+    match /CHR/{ticketId} {
+      allow read: if isAuthenticated() && hasAccessToSector('CHR');
+      allow write: if isAuthenticated() && hasRole('Admin');
+      // Example: Allow update only for Admins or Technicians assigned to CHR
+      // allow update: if isAuthenticated() && (hasRole('Admin') || (hasRole('Technician') && hasAccessToSector('CHR')));
+    }
+    match /HACCP/{ticketId} {
+      allow read: if isAuthenticated() && hasAccessToSector('HACCP');
+      allow write: if isAuthenticated() && hasRole('Admin');
+    }
+    match /Kezia/{ticketId} {
+      allow read: if isAuthenticated() && hasAccessToSector('Kezia');
+      allow write: if isAuthenticated() && hasRole('Admin');
+    }
+    match /Tabac/{ticketId} {
+      allow read: if isAuthenticated() && hasAccessToSector('Tabac');
+      allow write: if isAuthenticated() && hasRole('Admin');
+    }
+
+    // Envoi (Shipments) Collection:
+    // - Allow authenticated users to read shipments if their sectors include the shipment's sector.
+    // - Allow Admins to write.
+    match /Envoi/{shipmentId} {
+      // Read allowed if user is authenticated AND (is Admin OR has access to the specific sector listed IN THE DOCUMENT)
+      allow read: if isAuthenticated() && resourceSectorAllowed(resource);
+      allow write: if isAuthenticated() && hasRole('Admin');
+      // Example: Allow update by Admin or Commercial with access to the sector
+      // allow update: if isAuthenticated() && (hasRole('Admin') || (hasRole('Commercial') && resourceSectorAllowed(resource)));
+    }
+
+    // Daily Stats Snapshots:
+    // - Allow any authenticated user to read.
+    // - Allow only Admins (or a specific service account/function) to write.
+    match /dailyStatsSnapshots/{snapshotId} {
+      allow read: if isAuthenticated();
+      // Restrict write access, e.g., only to Admins or a backend function
+      allow write: if isAuthenticated() && hasRole('Admin');
+      // To allow a Cloud Function (using its service account), you might not need specific rules here
+      // if the function runs with elevated privileges, but explicit rules are safer.
+    }
+
+    // Geocodes Cache Collection:
+    // - Allow any authenticated user to read (to check cache).
+    // - Allow any authenticated user to write (to store results).
+    // Consider adding rate limiting rules if abuse is a concern.
+    match /geocodes/{addressId} {
+       allow read, write: if isAuthenticated();
+       // Example: Validate written data structure (optional but good practice)
+       // allow write: if isAuthenticated() && request.resource.data.keys().hasAll(['latitude', 'longitude', 'timestamp'])
+       //                 && request.resource.data.latitude is number
+       //                 && request.resource.data.longitude is number
+       //                 && request.resource.data.timestamp == request.time; // Ensure server timestamp is used
+    }
+
+    // Articles Collection (Example - adjust as needed):
+    // - Allow any authenticated user to read.
+    // - Allow Admins to write.
+    match /articles/{articleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && hasRole('Admin');
+    }
+
+  }
+}

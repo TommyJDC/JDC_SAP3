@@ -1,84 +1,108 @@
-import React from 'react';
-import type { Shipment } from '~/types/firestore.types';
+import React, { useMemo } from 'react';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTruckFast, faSpinner, faExclamationTriangle } from '@fortawesome/free-solid-svg-icons';
-import tailwindConfig from '../../tailwind.config'; // Import Tailwind config
+import { faTruckFast, faExternalLinkAlt, faBuilding, faChevronDown, faChevronRight } from '@fortawesome/free-solid-svg-icons';
+import type { Shipment } from '~/types/firestore.types';
+import { getShipmentStatusStyle } from '~/utils/styleUtils'; // Import the utility function
+import { Button } from './ui/Button'; // Assuming Button component handles links
 
 interface RecentShipmentsProps {
   shipments: Shipment[];
-  isLoading?: boolean;
-  error?: string | null;
+  isLoading: boolean;
 }
 
-// Get the color value from the resolved config
-const jdcYellowColor = tailwindConfig.theme.extend.colors['jdc-yellow'];
-
-export const RecentShipments: React.FC<RecentShipmentsProps> = ({ shipments, isLoading = false, error = null }) => {
-
-  const getClientDisplay = (shipment: Shipment): string => {
-    return shipment.nomClient || shipment.codeClient || 'Client inconnu';
-  };
-
-  // Function to determine status info (Updated with colors)
-  const getStatusInfo = (status?: 'OUI' | 'NON' | string): { text: string; className: string } => {
-    switch (status?.toUpperCase()) { // Convert to uppercase for case-insensitivity
-      case 'OUI':
-        return { text: 'Livré', className: 'bg-green-600 text-white' }; // Green for delivered
-      case 'NON':
-        return { text: 'En cours', className: 'bg-yellow-500 text-black' }; // Yellow for in progress
-      // Add more cases if needed for other specific statuses
-      // e.g., case 'ANNULÉ': return { text: 'Annulé', className: 'bg-red-600 text-white' };
-      default:
-        // Use gray for unknown or other statuses
-        return { text: status || 'Inconnu', className: 'bg-jdc-gray-500 text-white' };
+// Helper function to group shipments by client name
+const groupShipmentsByClient = (shipments: Shipment[]): Map<string, Shipment[]> => {
+  const grouped = new Map<string, Shipment[]>();
+  if (!Array.isArray(shipments)) {
+    return grouped; // Return empty map if shipments is not an array
+  }
+  shipments.forEach(shipment => {
+    const clientName = shipment.nomClient || 'Client Inconnu'; // Use fallback name
+    const existing = grouped.get(clientName);
+    if (existing) {
+      existing.push(shipment);
+    } else {
+      grouped.set(clientName, [shipment]);
     }
-  };
+  });
+  return grouped;
+};
+
+export const RecentShipments: React.FC<RecentShipmentsProps> = ({ shipments, isLoading }) => {
+
+  // Group shipments by client name using useMemo for performance
+  const groupedShipments = useMemo(() => groupShipmentsByClient(shipments), [shipments]);
+
+  // Convert Map to Array for easier rendering
+  const clientGroups = useMemo(() => Array.from(groupedShipments.entries()), [groupedShipments]);
 
   return (
     <div className="bg-jdc-card p-4 rounded-lg shadow-lg">
       <h2 className="text-xl font-semibold text-white mb-3 flex items-center">
-         {/* Use color prop for FontAwesomeIcon */}
-        <FontAwesomeIcon icon={faTruckFast} className="mr-2" color={jdcYellowColor} />
+        <FontAwesomeIcon icon={faTruckFast} className="mr-2 text-jdc-yellow" />
         Envois CTN Récents
       </h2>
-       {isLoading && (
-        <div className="flex items-center justify-center text-jdc-gray-300 py-4">
-          <FontAwesomeIcon icon={faSpinner} spin className="mr-2" />
-          Chargement...
-        </div>
-      )}
-      {error && !isLoading && (
-         <div className="flex items-center text-red-400 py-4">
-           <FontAwesomeIcon icon={faExclamationTriangle} className="mr-2" />
-           Erreur: {error}
-         </div>
-      )}
-      {!isLoading && !error && shipments.length === 0 && (
-        <p className="text-jdc-gray-400 text-center py-4">Aucun envoi récent à afficher.</p>
-      )}
-      {!isLoading && !error && shipments.length > 0 && (
-        <ul className="space-y-2 max-h-60 overflow-y-auto pr-2">
-          {shipments.map((shipment) => {
-            const statusInfo = getStatusInfo(shipment.statutExpedition); // Get status info including className
-            return (
-              <li key={shipment.id} className="flex justify-between items-start text-sm p-2 bg-jdc-gray-800 rounded hover:bg-jdc-gray-700">
-                <div className="flex-grow mr-2">
-                  <span className="font-medium text-white block">{getClientDisplay(shipment)}</span>
-                  <span className="text-jdc-gray-400 block text-xs">
-                    {shipment.articleNom || 'Article inconnu'} - BT: {shipment.bt || 'N/A'}
-                  </span>
-                   {/* Optional: Add date here if available in Shipment type */}
-                </div>
-                <div className="flex-shrink-0 text-right">
-                  {/* Apply status classes */}
-                  <span className={`px-2 py-0.5 rounded text-xs font-semibold whitespace-nowrap ${statusInfo.className}`}>
-                    {statusInfo.text}
-                  </span>
-                  {/* Optional: Add link to tracking if available */}
-                </div>
-              </li>
-            );
-          })}
+      {isLoading ? (
+        <div className="text-center text-jdc-gray-400 py-4">Chargement...</div>
+      ) : clientGroups.length === 0 ? (
+        <div className="text-center text-jdc-gray-400 py-4">Aucun envoi récent trouvé.</div>
+      ) : (
+        <ul className="space-y-2">
+          {clientGroups.map(([clientName, clientShipments]) => (
+            <li key={clientName} className="bg-jdc-gray-800 rounded-md overflow-hidden">
+              <details className="group">
+                <summary className="flex items-center justify-between p-3 cursor-pointer hover:bg-jdc-gray-700 list-none">
+                  <div className="flex items-center">
+                    <FontAwesomeIcon icon={faBuilding} className="mr-3 text-jdc-gray-300" />
+                    <span className="font-medium text-white">{clientName}</span>
+                    <span className="ml-2 text-sm text-jdc-gray-400">({clientShipments.length} envoi{clientShipments.length > 1 ? 's' : ''})</span>
+                  </div>
+                  <FontAwesomeIcon
+                    icon={faChevronRight}
+                    className="text-jdc-gray-400 transition-transform duration-200 group-open:rotate-90"
+                  />
+                </summary>
+                <ul className="border-t border-jdc-gray-700 p-3 space-y-2">
+                  {clientShipments.map((shipment) => {
+                    const statusStyle = getShipmentStatusStyle(shipment.statutExpedition);
+                    const truncatedArticle = shipment.articleNom && shipment.articleNom.length > 40
+                      ? `${shipment.articleNom.substring(0, 37)}...`
+                      : shipment.articleNom;
+
+                    return (
+                      <li key={shipment.id} className="flex items-center justify-between text-sm">
+                        <div className="flex-1 min-w-0 mr-2">
+                          <span className="text-jdc-gray-300 block truncate" title={shipment.articleNom}>
+                            {truncatedArticle || 'Article non spécifié'}
+                          </span>
+                          <span className={`inline-block px-2 py-0.5 rounded text-xs font-semibold ${statusStyle.bgColor} ${statusStyle.textColor}`}>
+                            {shipment.statutExpedition || 'Inconnu'}
+                          </span>
+                           <span className="text-jdc-gray-500 ml-2 text-xs">
+                             ({shipment.secteur || 'Secteur inconnu'})
+                           </span>
+                        </div>
+                        {shipment.trackingLink && (
+                          <Button
+                            as="link"
+                            to={shipment.trackingLink}
+                            target="_blank" // Open in new tab
+                            rel="noopener noreferrer" // Security best practice
+                            variant="ghost"
+                            size="sm"
+                            className="!p-1" // Reduce padding for icon-only feel
+                            title="Suivre le colis"
+                          >
+                            <FontAwesomeIcon icon={faExternalLinkAlt} className="h-4 w-4 text-jdc-yellow" />
+                          </Button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              </details>
+            </li>
+          ))}
         </ul>
       )}
     </div>
