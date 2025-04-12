@@ -1,86 +1,76 @@
-// Base type for user data from auth service
-export interface AppUser {
-  uid: string;
-  email: string | null;
-  displayName: string | null;
-}
-
-// Type for data stored in the /users collection in Firestore
+/**
+ * Represents the structure of user profile data stored in Firestore.
+ */
 export interface UserProfile {
-  uid: string; // Should match auth uid
+  uid: string;
   email: string;
-  displayName?: string;
-  role: 'Admin' | 'Commercial' | 'Technician'; // Define roles
-  secteurs?: string[]; // Optional: For sector-specific access
-  // Add other profile fields as needed
+  role: 'Admin' | 'Technician' | string; // Define known roles, allow string for flexibility
+  secteurs: string[]; // Array of sectors the user belongs to
+  displayName?: string; // Optional display name
 }
 
-// Type for SAP Tickets (adjust fields based on actual Firestore data)
+/**
+ * Represents a SAP ticket document from Firestore sector collections (CHR, HACCP, etc.).
+ */
 export interface SapTicket {
   id: string; // Document ID
-  adresse?: string;
-  codeClient?: string;
-  date?: any; // Can be Firestore Timestamp or string - handle conversion
-  demandeSAP?: string;
-  messageId?: string;
-  numeroSAP?: string;
-  raisonSociale?: string;
-  secret?: string;
-  solution?: string;
-  statut?: 'Ouvert' | 'En cours' | 'Fermé' | 'Nouveau' | 'Demande de RMA' | string; // Allow other statuses too
-  summary?: string;
-  telephone?: string;
-  secteur: string; // Added to know the origin collection
+  // Add other fields based on your Firestore structure
+  date: Date | firebase.firestore.Timestamp; // Example field
+  client: string; // Example field
+  description: string; // Example field
+  statut: string; // Example field
+  secteur: string; // Added to indicate the source sector/collection
+  // ... other ticket properties
 }
 
-// Type for Shipments (adjust fields based on actual Firestore data)
+/**
+ * Represents a Shipment document from the 'Envoi' collection in Firestore.
+ */
 export interface Shipment {
   id: string; // Document ID
-  articleNom?: string;
-  bt?: string;
-  codeClient?: string;
-  nomClient?: string;
-  secteur?: string;
-  statutExpedition?: 'OUI' | 'NON' | 'RELICAT' | string; // Added RELICAT, allow other statuses too
-  trackingLink?: string;
-  dateCreation?: any; // Added for sorting/display (Timestamp or Date)
+  // Add other fields based on your Firestore structure
+  codeClient: string;
+  nomClient: string;
+  adresse: string;
+  ville: string;
+  codePostal: string;
+  statutExpedition: 'OUI' | 'NON' | string; // Example status field
+  secteur: string; // Sector associated with the shipment (used for rules)
+  dateCreation?: Date | firebase.firestore.Timestamp; // Optional: If you add this field later
+  latitude?: number; // Added for map display
+  longitude?: number; // Added for map display
+  // ... other shipment properties
 }
 
-// Type for data expected by the Dashboard component (now fetched client-side)
-export interface DashboardStats {
-  ticketCount: number | null;
-  shipmentCount: number | null;
-  clientCount: number | null;
+/**
+ * Represents a snapshot of statistics stored in Firestore (e.g., in 'dailyStatsSnapshots').
+ */
+export interface StatsSnapshot {
+  id: string; // Document ID (e.g., date string 'YYYY-MM-DD')
+  timestamp: Date | firebase.firestore.Timestamp; // When the snapshot was taken
+  totalTickets: number;
+  activeShipments: number;
+  activeClients: number;
+  // Add other stats fields as needed
 }
 
-// Type for the (now minimal) data returned by the dashboard loader
-export interface DashboardLoaderData {
- // No longer fetching data here, could be empty or hold static config
- // Example: maybe theme preference or static text?
-}
-
-// Type for Geocoding Cache stored in Firestore
+/**
+ * Represents a geocoding cache entry in Firestore.
+ * Document ID is the normalized address string.
+ */
 export interface GeocodeCacheEntry {
-  // The document ID will be the normalized address string
   latitude: number;
   longitude: number;
-  timestamp: any; // Firestore Timestamp (serverTimestamp())
+  timestamp: firebase.firestore.FieldValue | firebase.firestore.Timestamp; // Use FieldValue for serverTimestamp on write
 }
 
+// Re-export AppUser from auth.service for convenience if needed elsewhere
+// Or keep imports separate where used.
+// export type { AppUser } from '~/services/auth.service';
 
-// Type for Articles
-export interface Article {
-  id: string; // Document ID
-  nom: string;
-  reference: string;
-  // Add other article fields
-}
+// Namespace Firebase types if needed to avoid conflicts, e.g.,
+import * as firebase from 'firebase/firestore';
 
-// Type for Daily Stats Snapshots
-export interface StatsSnapshot {
-  id: string; // Document ID (e.g., "2023-10-27")
-  timestamp: any; // Firestore Timestamp
-  ticketCount: number;
-  shipmentCount: number;
-  clientCount: number;
-}
+// Note: Ensure you have consistent Timestamp handling (either Firebase Timestamps
+// or JS Dates) throughout your application where these types are used.
+// Conversion often happens when fetching/sending data.

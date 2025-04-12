@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-// Leaflet CSS is now imported globally in root.tsx
+// Leaflet CSS is now imported globally in root.tsx - REMOVE local import if present
+// import 'leaflet/dist/leaflet.css'; // <-- REMOVE THIS LINE if it exists
 import L from 'leaflet'; // Import Leaflet library
 import useGeoCoding from '~/hooks/useGeoCoding'; // Adjusted import path
 import { kmlZones } from '~/utils/kmlZones'; // Adjusted import path
@@ -155,6 +156,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ tickets, isLoadingTicke
         setMapReady(true);
         console.log("[InteractiveMap] Map initialized successfully.");
 
+        // Keep the invalidateSize timeout for now, it might still be needed
         timerId = setTimeout(() => {
             if (mapRef.current && mapContainerRef.current) {
                 console.log("[InteractiveMap] Calling invalidateSize() via setTimeout...");
@@ -165,7 +167,7 @@ const InteractiveMap: React.FC<InteractiveMapProps> = ({ tickets, isLoadingTicke
             } else {
                  console.log("[InteractiveMap] mapRef or mapContainerRef is null in setTimeout, cannot invalidate size.");
             }
-        }, 100);
+        }, 100); // 100ms delay
 
 
     } catch (error: any) {

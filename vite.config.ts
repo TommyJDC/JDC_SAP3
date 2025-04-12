@@ -11,7 +11,7 @@ export default defineConfig({
         v3_throwAbortReason: true,
       },
       // Explicitly tell Remix where the app directory is
-      appDirectory: "app", 
+      appDirectory: "app",
     }),
     tsconfigPaths(),
   ],
@@ -19,6 +19,7 @@ export default defineConfig({
     include: ['leaflet'],
   },
    ssr: {
-    // noExternal: ['leaflet'], // Uncomment if Leaflet causes SSR issues
+    // Remove 'uuid' as it's no longer an external dependency
+    noExternal: ['isbot'], // Keep isbot here if it was needed before
   },
 });

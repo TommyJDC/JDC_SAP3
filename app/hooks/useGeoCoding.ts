@@ -32,7 +32,8 @@ const useGeoCoding = (addresses: string[]): UseGeoCodingResult => {
   const [coordinatesMap, setCoordinatesMap] = useState<Map<string, Coordinates>>(new Map());
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const apiKey = import.meta.env.VITE_OPENCAGE_API_KEY;
+  // Hardcoded API Key
+  const apiKey = "b93a76ecb4b0439dbfe9e64c3c6aff07";
   // Keep track of addresses currently being processed to avoid duplicate requests
   const processingRef = useRef<Set<string>>(new Set());
 
@@ -54,7 +55,8 @@ const useGeoCoding = (addresses: string[]): UseGeoCodingResult => {
       }
 
       if (!apiKey) {
-        console.error("OpenCage API Key (VITE_OPENCAGE_API_KEY) is missing in .env");
+        // This check is less critical now but kept for structure
+        console.error("OpenCage API Key is missing (hardcoded value)");
         setError('API Key missing');
         setIsLoading(false);
         return;
@@ -209,7 +211,7 @@ const useGeoCoding = (addresses: string[]): UseGeoCodingResult => {
     // Use stable key derived from addresses array
   }, [addressesKey, apiKey]); // Rerun when addresses or apiKey change
 
-  return { coordinates: coordinatesMap, isLoading, error };
+  return { coordinates: coordinatesMap, isLoading: error };
 };
 
 export default useGeoCoding;
