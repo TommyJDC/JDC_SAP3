@@ -1,0 +1,11 @@
+/* Add any global styles here */
+body {
+  /* Example global style */
+  overscroll-behavior: none; /* Prevent pull-to-refresh */
+}
+
+/* Leaflet map container */
+.leaflet-container {
+  height: 400px; /* Default height, can be overridden */
+  width: 100%;
+}
